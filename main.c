@@ -42,7 +42,7 @@ typedef struct file {
 
     struct fs_object* _obj;
 
-    void* priv_data;
+    void* priv_data;  // FS-specific data can be stored here.
 } NFILE;
 
 struct filesystem;
@@ -52,7 +52,7 @@ typedef struct fs_object {
     size_t disk_nr;  // Disk number (used by fs to read from that disk)
     struct filesystem* filesystem;
 
-    void* priv_data;
+    void* priv_data;  // FS-specific data can be stored here.
 } fs_object_t;
 
 typedef bool (*probe_fn_t)(size_t, fs_object_t*);
@@ -303,7 +303,11 @@ NFILE* nfopen(const char* path) {
 }
 
 void nfclose(NFILE* file) {
+    fs_object_t* mt = file->_obj;
+    
+    mt->filesystem->fileclose(mt, file);
 
+    free(file);
 }
 
 int main() {
