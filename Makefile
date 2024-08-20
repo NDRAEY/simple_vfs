@@ -1,2 +1,2 @@
 all:
-	$(CC) main.c -w -o vfs
+	$(CC) main.c -w -g -o vfs

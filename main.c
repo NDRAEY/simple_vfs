@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string.h>
 
 typedef struct datetime {
     // Date
@@ -58,6 +59,8 @@ typedef struct fs_object {
 typedef bool (*probe_fn_t)(size_t, fs_object_t*);
 typedef direntry_t* (*diropen_fn_t)(fs_object_t* fs, const char* path);
 typedef NFILE* (*fileopen_fn_t)(fs_object_t* fs, const char* path);
+typedef size_t (*fileread_fn_t)(fs_object_t* fs, void* data, size_t size, size_t count, NFILE* fp);
+typedef size_t (*filewrite_fn_t)(fs_object_t* fs, const void* data, size_t size, size_t count, NFILE* fp);
 typedef void (*fileclose_fn_t)(fs_object_t* fs, NFILE* file);
 //typedef void (*dirclose_fn_t)(fs_object_t* fs, direntry_t* entry);
 
@@ -67,6 +70,8 @@ typedef struct filesystem {
     probe_fn_t probe;
     diropen_fn_t diropen;
     fileopen_fn_t fileopen;
+    fileread_fn_t fileread;
+    filewrite_fn_t filewrite;
     fileclose_fn_t fileclose;
 } filesystem_t;
 
@@ -76,11 +81,6 @@ typedef struct filesystem {
 static filesystem_t registered_filesystems[FILESYSTEM_MAX_COUNT] = {0};
 static fs_object_t registered_mountpoints[MOUNTPOINTS_MAX_COUNT] = {0};
 
-/**
- * @brief Находит свободный номер файловой системы.
- *
- * @return Свободный номер файловой системы или -1, если все файловые системы заняты.
- */
 int find_free_fs_nr() {
     for (int i = 0; i < 32; i++) {
         if (!registered_filesystems[i].valid) {
@@ -91,18 +91,8 @@ int find_free_fs_nr() {
     return -1;
 }
 
-
-/**
- * @brief Регистрирует файловую систему.
- *
- * @param name Название файловой системы.
- * @param probe Функция проверки поддержки файловой системы.
- * @param diropen функция открытия директории или файла.
- * @param fileopen функция открытия файла.
- * @param fileclose функция закрытия файла.
- * @return Номер зарегистрированной файловой системы или -1, если все номера заняты.
- */
-int register_filesystem(const char* name, probe_fn_t probe, diropen_fn_t diropen, fileopen_fn_t fileopen, fileclose_fn_t fileclose) {
+int register_filesystem(const char* name, probe_fn_t probe, diropen_fn_t diropen, fileopen_fn_t fileopen,
+                fileread_fn_t fileread, filewrite_fn_t filewrite, fileclose_fn_t fileclose) {
     int fs_nr = find_free_fs_nr();
 
     if (fs_nr == -1) {
@@ -114,17 +104,13 @@ int register_filesystem(const char* name, probe_fn_t probe, diropen_fn_t diropen
     registered_filesystems[fs_nr].probe = probe;
     registered_filesystems[fs_nr].diropen = diropen;
     registered_filesystems[fs_nr].fileopen = fileopen;
+    registered_filesystems[fs_nr].fileread = fileread;
+    registered_filesystems[fs_nr].filewrite = filewrite;
     registered_filesystems[fs_nr].fileclose = fileclose;
 
     return fs_nr;
 }
 
-
-/**
- * @brief Находит свободный номер точки монтирования.
- *
- * @return Свободный номер точки монтирования или -1, если все точки монтирования заняты.
- */
 int find_free_mountpoint_nr() {
     for (int i = 0; i < 32; i++) {
         if (!registered_mountpoints[i].valid) {
@@ -134,7 +120,6 @@ int find_free_mountpoint_nr() {
 
     return -1;
 }
-
 
 int register_mountpoint(size_t disk_nr, filesystem_t* fs, void* priv_data) {
     int mp_nr = find_free_mountpoint_nr();
@@ -151,9 +136,6 @@ int register_mountpoint(size_t disk_nr, filesystem_t* fs, void* priv_data) {
     return mp_nr;
 }
 
-/**
- * @brief Сканирует диски и регистрирует точки монтирования.
- */
 void vfs_scan() {
     // TODO: Really scan disks on filesystems, but it's a simple test, so we just add a mountpoint here
     
@@ -167,14 +149,12 @@ void vfs_scan() {
             bool result = registered_filesystems[fsn].probe(disk, registered_mountpoints + disk);
 
             if(result) {
-                // If okay register mountpoint.
                 register_mountpoint(disk, registered_filesystems + fsn, NULL);
                 printf("Filesystem %s registered on disk %d!\n", registered_filesystems[fsn].name, disk);
             }
         }
     }
 }
-
 
 bool debugfs_probe(size_t disk_nr, fs_object_t* fs) {
     (void)fs;
@@ -229,7 +209,7 @@ NFILE* debugfs_fileopen(fs_object_t* fs, const char* path) {
     f->name = "Unknown.txt";
     f->size = 2;
 
-    return NULL;
+    return f;
 }
 
 void debugfs_fileclose(fs_object_t* fs, NFILE* file) {
@@ -240,13 +220,21 @@ void debugfs_fileclose(fs_object_t* fs, NFILE* file) {
     }
 }
 
-/**
- * @brief Парсит полный путь и извлекает номер диска и путь.
- *
- * @param full_path Полный путь.
- * @param out_disk_nr Указатель на номер диска.
- * @param out_path Указатель на путь.
- */
+size_t debugfs_fileread(fs_object_t* fs, void* data, size_t size, size_t count, NFILE* file) {
+    (void)data;
+    (void)size;
+    (void)count;
+
+    printf("[debugfs] Read requested: size: %zu; count: %zu; pos: %zu\n", size, count, file->position);
+
+    return 0;
+}
+
+size_t debugfs_filewrite(fs_object_t* fs, const void* data, size_t size, size_t count, NFILE* file) {
+    printf("[debugfs] Write requested: size: %zu; count: %zu; pos: %zu\n", size, count, file->position);
+    return 0;
+}
+
 void vfs_parse_path(const char* full_path, size_t* out_disk_nr, char** out_path) {
     char* path = NULL;
 
@@ -261,7 +249,6 @@ void vfs_parse_path(const char* full_path, size_t* out_disk_nr, char** out_path)
     *out_disk_nr = disk_nr;
     *out_path = path;
 }
-
 
 direntry_t* diropen(const char* path) {
     size_t disk_nr;
@@ -346,6 +333,39 @@ void nfclose(NFILE* file) {
     free(file);
 }
 
+size_t nfread(void* buffer, size_t size, size_t count, NFILE* file) {
+    if (!file) {
+        return 0;
+    }
+
+    fs_object_t* mt = file->_obj;
+
+    size_t a = mt->filesystem->fileread(mt, buffer, size, count, file);
+
+    /*size_t bytes_to_read = size * count;
+    if (file->position + bytes_to_read > file->size) {
+        bytes_to_read = file->size - file->position;
+    }
+
+    if (bytes_to_read == 0) {
+        return 0;
+    }*/
+
+    return a;
+}
+
+size_t nfwrite(const void* buffer, size_t size, size_t count, NFILE* file) {
+    if (!file) {
+        return 0;
+    }
+
+    fs_object_t* mt = file->_obj;
+
+    size_t a = mt->filesystem->filewrite(mt, buffer, size, count, file);
+    return a;
+}
+
+
 int main() {
     const char* path = "0:/";
 
@@ -356,10 +376,14 @@ int main() {
 
     printf("Disk nr: %zu; Path: %s\n", disk, div_path);
 
-    // Real usage here.
-    register_filesystem("debugfs", &debugfs_probe, &debugfs_diropen, debugfs_fileopen, debugfs_fileclose);
+    // Register and scan filesystems
+    register_filesystem("debugfs",
+            &debugfs_probe, &debugfs_diropen, debugfs_fileopen,
+            debugfs_fileread, debugfs_filewrite,
+            debugfs_fileclose);
     vfs_scan();
 
+    // Open a directory and list its contents
     direntry_t* entry = diropen(path);
 
     printf("dir: %p\n", entry);
@@ -380,6 +404,36 @@ int main() {
     } while(original_pointer);
 
     dirclose(entry);
+
+    // Test nfwrite and nfread
+    const char* file_path = "0:/testfile.txt";
+    NFILE* test_file = nfopen(file_path);
+
+    if (!test_file) {
+        printf("Failed to open or create file: %s\n", file_path);
+        return 1;
+    }
+
+    printf("Opened file: %s\n", file_path);
+
+    const char* test_data = "Hello, VFS!";
+    size_t data_length = strlen(test_data);
+
+    // Write data to file
+    size_t written_elements = nfwrite(test_data, sizeof(char), data_length, test_file);
+    printf("Written elements: %zu\n", written_elements);
+
+    // Reset the file position to the beginning
+    test_file->position = 0;
+
+    // Read data from file
+    char read_buffer[128] = {0};
+    size_t read_elements = nfread(read_buffer, sizeof(char), data_length, test_file);
+    printf("Read elements: %zu\n", read_elements);
+    printf("Read data: %s\n", read_buffer);
+
+    // Close the file
+    nfclose(test_file);
 
     return 0;
 }
