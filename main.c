@@ -76,6 +76,11 @@ typedef struct filesystem {
 static filesystem_t registered_filesystems[FILESYSTEM_MAX_COUNT] = {0};
 static fs_object_t registered_mountpoints[MOUNTPOINTS_MAX_COUNT] = {0};
 
+/**
+ * @brief Находит свободный номер файловой системы.
+ *
+ * @return Свободный номер файловой системы или -1, если все файловые системы заняты.
+ */
 int find_free_fs_nr() {
     for (int i = 0; i < 32; i++) {
         if (!registered_filesystems[i].valid) {
@@ -86,6 +91,17 @@ int find_free_fs_nr() {
     return -1;
 }
 
+
+/**
+ * @brief Регистрирует файловую систему.
+ *
+ * @param name Название файловой системы.
+ * @param probe Функция проверки поддержки файловой системы.
+ * @param diropen функция открытия директории или файла.
+ * @param fileopen функция открытия файла.
+ * @param fileclose функция закрытия файла.
+ * @return Номер зарегистрированной файловой системы или -1, если все номера заняты.
+ */
 int register_filesystem(const char* name, probe_fn_t probe, diropen_fn_t diropen, fileopen_fn_t fileopen, fileclose_fn_t fileclose) {
     int fs_nr = find_free_fs_nr();
 
@@ -103,6 +119,12 @@ int register_filesystem(const char* name, probe_fn_t probe, diropen_fn_t diropen
     return fs_nr;
 }
 
+
+/**
+ * @brief Находит свободный номер точки монтирования.
+ *
+ * @return Свободный номер точки монтирования или -1, если все точки монтирования заняты.
+ */
 int find_free_mountpoint_nr() {
     for (int i = 0; i < 32; i++) {
         if (!registered_mountpoints[i].valid) {
@@ -112,6 +134,7 @@ int find_free_mountpoint_nr() {
 
     return -1;
 }
+
 
 int register_mountpoint(size_t disk_nr, filesystem_t* fs, void* priv_data) {
     int mp_nr = find_free_mountpoint_nr();
@@ -128,6 +151,9 @@ int register_mountpoint(size_t disk_nr, filesystem_t* fs, void* priv_data) {
     return mp_nr;
 }
 
+/**
+ * @brief Сканирует диски и регистрирует точки монтирования.
+ */
 void vfs_scan() {
     // TODO: Really scan disks on filesystems, but it's a simple test, so we just add a mountpoint here
     
@@ -141,12 +167,14 @@ void vfs_scan() {
             bool result = registered_filesystems[fsn].probe(disk, registered_mountpoints + disk);
 
             if(result) {
+                // If okay register mountpoint.
                 register_mountpoint(disk, registered_filesystems + fsn, NULL);
                 printf("Filesystem %s registered on disk %d!\n", registered_filesystems[fsn].name, disk);
             }
         }
     }
 }
+
 
 bool debugfs_probe(size_t disk_nr, fs_object_t* fs) {
     (void)fs;
@@ -212,6 +240,13 @@ void debugfs_fileclose(fs_object_t* fs, NFILE* file) {
     }
 }
 
+/**
+ * @brief Парсит полный путь и извлекает номер диска и путь.
+ *
+ * @param full_path Полный путь.
+ * @param out_disk_nr Указатель на номер диска.
+ * @param out_path Указатель на путь.
+ */
 void vfs_parse_path(const char* full_path, size_t* out_disk_nr, char** out_path) {
     char* path = NULL;
 
@@ -226,6 +261,7 @@ void vfs_parse_path(const char* full_path, size_t* out_disk_nr, char** out_path)
     *out_disk_nr = disk_nr;
     *out_path = path;
 }
+
 
 direntry_t* diropen(const char* path) {
     size_t disk_nr;
